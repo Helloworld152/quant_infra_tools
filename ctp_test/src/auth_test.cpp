@@ -1,6 +1,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstring>
+#include <iconv.h>
 #include <fstream>
 #include <iostream>
 #include <map>
@@ -30,6 +31,47 @@ static std::string trim(const std::string& s) {
         --end;
     }
     return s.substr(start, end - start);
+}
+
+static std::string decodeGbkToUtf8(const char* text) {
+    if (text == nullptr || text[0] == '\0') {
+        return "";
+    }
+
+    std::string input(text);
+    iconv_t cd = iconv_open("UTF-8", "GB18030");
+    if (cd == reinterpret_cast<iconv_t>(-1)) {
+        return input;
+    }
+
+    size_t in_left = input.size();
+    size_t out_left = input.size() * 4 + 1;
+    std::string output(out_left, '\0');
+    char* in_buf = const_cast<char*>(input.data());
+    char* out_buf = &output[0];
+
+    if (iconv(cd, &in_buf, &in_left, &out_buf, &out_left) == static_cast<size_t>(-1)) {
+        iconv_close(cd);
+        return input;
+    }
+
+    iconv_close(cd);
+    output.resize(output.size() - out_left);
+    return output;
+}
+
+static void printRspError(const char* stage, CThostFtdcRspInfoField* pRspInfo) {
+    if (!pRspInfo || pRspInfo->ErrorID == 0) {
+        return;
+    }
+
+    const std::string decoded = decodeGbkToUtf8(pRspInfo->ErrorMsg);
+    std::cerr << stage << ", ErrorID=" << pRspInfo->ErrorID
+              << ", ErrorMsgRaw=" << pRspInfo->ErrorMsg;
+    if (!decoded.empty() && decoded != pRspInfo->ErrorMsg) {
+        std::cerr << ", ErrorMsgUtf8=" << decoded;
+    }
+    std::cerr << std::endl;
 }
 
 static bool parseIni(const std::string& path, std::map<std::string, std::map<std::string, std::string> >& data) {
@@ -134,8 +176,7 @@ public:
         int,
         bool) override {
         if (pRspInfo && pRspInfo->ErrorID != 0) {
-            std::cerr << "[2/3] Authenticate failed, ErrorID=" << pRspInfo->ErrorID
-                      << ", ErrorMsg=" << pRspInfo->ErrorMsg << std::endl;
+            printRspError("[2/3] Authenticate failed", pRspInfo);
             finished_ = true;
             success_ = false;
             return;
@@ -151,8 +192,7 @@ public:
         int,
         bool) override {
         if (pRspInfo && pRspInfo->ErrorID != 0) {
-            std::cerr << "[3/3] Login failed, ErrorID=" << pRspInfo->ErrorID
-                      << ", ErrorMsg=" << pRspInfo->ErrorMsg << std::endl;
+            printRspError("[3/3] Login failed", pRspInfo);
             finished_ = true;
             success_ = false;
             return;
@@ -168,9 +208,8 @@ public:
         if (!pRspInfo || pRspInfo->ErrorID == 0) {
             return;
         }
-        std::cerr << "OnRspError req=" << nRequestID
-                  << ", ErrorID=" << pRspInfo->ErrorID
-                  << ", ErrorMsg=" << pRspInfo->ErrorMsg << std::endl;
+        std::string stage = "OnRspError req=" + std::to_string(nRequestID);
+        printRspError(stage.c_str(), pRspInfo);
     }
 
 private:
@@ -192,7 +231,13 @@ private:
             success_ = false;
             return;
         }
-        std::cout << "Authenticate request sent." << std::endl;
+        std::cout << "Authenticate request sent:"
+                  << " BrokerID=" << cfg_.broker_id
+                  << " UserID=" << cfg_.user_id
+                  << " AppID=" << cfg_.app_id
+                  << " AuthCode=" << (cfg_.auth_code.empty() ? "(empty)" : "(set)")
+                  << " UserProductInfo=" << (cfg_.user_product_info.empty() ? "(empty)" : cfg_.user_product_info)
+                  << std::endl;
     }
 
     void sendLogin() {

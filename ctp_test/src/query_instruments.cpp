@@ -8,6 +8,7 @@
 #include <iomanip>
 #include <sstream>
 #include <ctime>
+#include <string>
 #include "ThostFtdcTraderApi.h"
 
 // 全局变量
@@ -20,14 +21,62 @@ int g_nRequestID = 0;
 std::vector<CThostFtdcInstrumentField> g_instrumentList;
 std::ofstream g_outputFile;
 
-// 认证信息（可根据实际情况修改）
-const char* g_BrokerID = "9999";
-const char* g_UserID = "247060";
-const char* g_Password = "RY20000219*";
-const char* g_AppID = "";
-const char* g_AuthCode = "";
-const char* g_UserProductInfo = "";
-const char* g_TraderFront = "tcp://184.254.243.31:30001";  // 模拟环境交易地址
+struct TraderConfig {
+    std::string front_address;
+    std::string broker_id;
+    std::string user_id;
+    std::string password;
+    std::string app_id;
+    std::string auth_code;
+    std::string user_product_info;
+};
+
+static TraderConfig g_cfg;
+
+static std::string trim(const std::string& s)
+{
+    size_t start = s.find_first_not_of(" \t\r\n");
+    if (start == std::string::npos) return "";
+    size_t end = s.find_last_not_of(" \t\r\n");
+    return s.substr(start, end == std::string::npos ? std::string::npos : end - start + 1);
+}
+
+static bool loadTraderConfig(const std::string& path, TraderConfig& cfg)
+{
+    std::ifstream in(path);
+    if (!in) return false;
+
+    std::string line;
+    std::string section;
+    while (std::getline(in, line)) {
+        line = trim(line);
+        if (line.empty() || line[0] == '#' || line[0] == ';') continue;
+        if (line.front() == '[' && line.back() == ']') {
+            section = trim(line.substr(1, line.size() - 2));
+            continue;
+        }
+
+        size_t eq = line.find('=');
+        if (eq == std::string::npos) continue;
+
+        std::string key = trim(line.substr(0, eq));
+        std::string val = trim(line.substr(eq + 1));
+        if (section != "TRADER") continue;
+
+        if (key == "FrontAddress") cfg.front_address = val;
+        else if (key == "BrokerID") cfg.broker_id = val;
+        else if (key == "UserID") cfg.user_id = val;
+        else if (key == "Password") cfg.password = val;
+        else if (key == "AppID") cfg.app_id = val;
+        else if (key == "AuthCode") cfg.auth_code = val;
+        else if (key == "UserProductInfo") cfg.user_product_info = val;
+    }
+
+    return !cfg.front_address.empty() &&
+           !cfg.broker_id.empty() &&
+           !cfg.user_id.empty() &&
+           !cfg.password.empty();
+}
 
 // 交易回调类
 class CTraderSpi : public CThostFtdcTraderSpi
@@ -47,7 +96,7 @@ public:
         g_bLoggedIn = false;
         
         // 如果AppID或认证码为空，跳过认证直接登录
-        if (strlen(g_AppID) == 0 || strlen(g_AuthCode) == 0) {
+        if (g_cfg.app_id.empty() || g_cfg.auth_code.empty()) {
             std::cout << "=== AppID或认证码为空，跳过认证直接登录 ===" << std::endl;
             g_bAuthenticated = true;  // 标记为已认证，因为不需要认证
             reqUserLogin();
@@ -64,12 +113,12 @@ public:
         
         CThostFtdcReqAuthenticateField req;
         memset(&req, 0, sizeof(req));
-        strcpy(req.BrokerID, g_BrokerID);
-        strcpy(req.UserID, g_UserID);
-        strcpy(req.AppID, g_AppID);
-        strcpy(req.AuthCode, g_AuthCode);
-        if (strlen(g_UserProductInfo) > 0) {
-            strcpy(req.UserProductInfo, g_UserProductInfo);
+        strncpy(req.BrokerID, g_cfg.broker_id.c_str(), sizeof(req.BrokerID) - 1);
+        strncpy(req.UserID, g_cfg.user_id.c_str(), sizeof(req.UserID) - 1);
+        strncpy(req.AppID, g_cfg.app_id.c_str(), sizeof(req.AppID) - 1);
+        strncpy(req.AuthCode, g_cfg.auth_code.c_str(), sizeof(req.AuthCode) - 1);
+        if (!g_cfg.user_product_info.empty()) {
+            strncpy(req.UserProductInfo, g_cfg.user_product_info.c_str(), sizeof(req.UserProductInfo) - 1);
         }
         
         int ret = m_pTraderApi->ReqAuthenticate(&req, ++g_nRequestID);
@@ -105,9 +154,9 @@ public:
         
         CThostFtdcReqUserLoginField req;
         memset(&req, 0, sizeof(req));
-        strcpy(req.BrokerID, g_BrokerID);
-        strcpy(req.UserID, g_UserID);
-        strcpy(req.Password, g_Password);
+        strncpy(req.BrokerID, g_cfg.broker_id.c_str(), sizeof(req.BrokerID) - 1);
+        strncpy(req.UserID, g_cfg.user_id.c_str(), sizeof(req.UserID) - 1);
+        strncpy(req.Password, g_cfg.password.c_str(), sizeof(req.Password) - 1);
         
         int ret = m_pTraderApi->ReqUserLogin(&req, ++g_nRequestID);
         if (ret != 0) {
@@ -146,7 +195,7 @@ public:
         }
         
         std::cout << "请检查：" << std::endl;
-        std::cout << "  1. 服务器地址是否正确: " << g_TraderFront << std::endl;
+        std::cout << "  1. 服务器地址是否正确: " << g_cfg.front_address << std::endl;
         std::cout << "  2. 网络连接是否正常" << std::endl;
         std::cout << "  3. 防火墙是否允许连接" << std::endl;
         
@@ -324,13 +373,24 @@ void signalHandler(int signum)
     exit(signum);
 }
 
-int main()
+int main(int argc, char* argv[])
 {
+    std::string config_path = "config/config.ini";
+    if (argc > 1) {
+        config_path = argv[1];
+    }
+    if (!loadTraderConfig(config_path, g_cfg)) {
+        std::cout << "加载配置失败: " << config_path
+                  << "，需要 [TRADER] FrontAddress/BrokerID/UserID/Password" << std::endl;
+        return -1;
+    }
+
     // 注册信号处理函数
     signal(SIGINT, signalHandler);
     signal(SIGTERM, signalHandler);
 
     std::cout << "=== CTP 合约查询程序启动 ===" << std::endl;
+    std::cout << "配置文件: " << config_path << std::endl;
 
     // 创建交易API实例
     g_pTraderApi = CThostFtdcTraderApi::CreateFtdcTraderApi("./data");
@@ -345,8 +405,8 @@ int main()
     g_pTraderApi->RegisterSpi(&traderSpi);
 
     // 注册前置地址
-    std::cout << "注册前置地址: " << g_TraderFront << std::endl;
-    g_pTraderApi->RegisterFront((char*)"tcp://182.254.243.31:30001");
+    std::cout << "注册前置地址: " << g_cfg.front_address << std::endl;
+    g_pTraderApi->RegisterFront(const_cast<char*>(g_cfg.front_address.c_str()));
 
     // 初始化API
     std::cout << "初始化API..." << std::endl;
@@ -377,7 +437,7 @@ int main()
             if (elapsed > CONNECT_TIMEOUT_SECONDS) {
                 std::cout << "=== 连接超时（" << CONNECT_TIMEOUT_SECONDS << "秒），可能原因：" << std::endl;
                 std::cout << "  1. 网络连接问题" << std::endl;
-                std::cout << "  2. 服务器地址错误: " << g_TraderFront << std::endl;
+                std::cout << "  2. 服务器地址错误: " << g_cfg.front_address << std::endl;
                 std::cout << "  3. 服务器不可达或端口被防火墙阻挡" << std::endl;
                 std::cout << "  4. 服务器维护中" << std::endl;
                 break;
