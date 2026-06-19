@@ -1,153 +1,69 @@
-# CTP API 行情获取程序
+# CTP Test
 
-## 项目结构
+`ctp_test/` 存放 CTP 基础测试与查询示例，源码、头文件、配置和运行脚本都位于该目录下，但构建入口已经统一到仓库根目录。
 
-```
-/home/rying/ctp_api/
-├── 📁 include/                       # 头文件目录
-│   ├── ThostFtdcUserApiDataType.h    # 数据类型定义
-│   ├── ThostFtdcUserApiStruct.h      # 结构体定义  
-│   ├── ThostFtdcMdApi.h              # 行情API接口
-│   └── ThostFtdcTraderApi.h          # 交易API接口
-├── 📁 lib/                          # 动态库目录
-│   ├── thostmduserapi_se.so          # 行情API动态库
-│   └── thosttraderapi_se.so          # 交易API动态库
-├── 📁 src/                          # 源代码目录
-│   ├── md_client.cpp                 # 完整版行情客户端
-│   └── simple_md_client.cpp          # 简化版行情客户端
-├── 📁 config/                       # 配置文件目录
-│   ├── config.ini                    # 配置文件
-│   ├── error.dtd                     # 错误定义
-│   └── error.xml                     # 错误信息
-├── 📁 build/                        # 构建输出目录 (自动生成)
-│   └── bin/                         # 可执行文件目录
-├── 🔧 构建系统
-│   ├── CMakeLists.txt               # CMake配置文件
-│   ├── Makefile                     # Make配置文件
-│   ├── build.sh                     # CMake构建脚本
-│   ├── clean.sh                     # 清理脚本
-│   └── compile.sh                   # 传统编译脚本
-└── 📖 README.md                     # 说明文档
+## 目录说明
+
+```text
+ctp_test/
+├── CMakeLists.txt
+├── config/
+├── include/
+├── lib/
+├── src/
+├── run.sh
+├── run_auth.sh
+├── run_qry.sh
+└── run_for_quote.sh
 ```
 
-## 编译和运行
+对应可执行文件：
 
-### 方法一：使用CMake (推荐)
+- `md_client`：行情客户端
+- `query_instruments`：合约查询
+- `auth_test`：穿透认证测试
+- `for_quote_demo`：询价示例
+
+## 统一构建
+
+在仓库根目录执行：
 
 ```bash
-# 使用CMake构建
-./build.sh
-
-# 运行程序
-cd build/bin
-./simple_md_client
-# 或
-./md_client
+cmake -S . -B build
+cmake --build build
 ```
 
-### 方法二：使用Make
+构建产物输出到仓库根目录 `bin/`，与 `build/` 同级：
+
+```text
+ctp_api/
+├── bin/
+└── build/
+```
+
+## 运行方式
+
+可以直接使用本目录脚本；脚本会自动调用根目录统一构建：
 
 ```bash
-# 使用Make编译
-make
-
-# 运行程序
-cd build/bin
-./simple_md_client
-# 或
-./md_client
+./run.sh
+./run_auth.sh [config_path]
+./run_qry.sh
+./run_for_quote.sh <instrument_id> <exchange_id> [config_path]
 ```
 
-### 方法三：使用传统脚本
+也可以在仓库根目录手动运行：
 
 ```bash
-# 使用传统编译脚本
-./compile.sh
+./bin/md_client
+./bin/auth_test ctp_test/config/config.ini
+./bin/query_instruments
+./bin/for_quote_demo au2412 SHFE ctp_test/config/config.ini
 ```
 
-### 清理构建文件
+## 运行前提
 
-```bash
-# 清理CMake构建文件
-./clean.sh
-
-# 或清理Make构建文件
-make clean
-```
-
-## 配置说明
-
-### 服务器地址配置
-
-- **模拟环境**: `tcp://180.168.146.187:10031`
-- **实盘环境**: 需要向期货公司申请
-
-### 登录信息
-
-- **BrokerID**: 经纪商代码
-- **UserID**: 用户代码  
-- **Password**: 密码
-
-### 订阅合约
-
-程序默认订阅以下期货合约：
-- `rb2501` - 螺纹钢主力合约
-- `hc2501` - 热卷主力合约
-- `i2501` - 铁矿石主力合约
-- `j2501` - 焦炭主力合约
-- `jm2501` - 焦煤主力合约
-
-## 程序功能
-
-### 简化版 (simple_md_client.cpp)
-- 基本的连接和登录
-- 订阅指定合约行情
-- 显示实时行情数据
-- 简洁的输出格式
-
-### 完整版 (md_client.cpp)
-- 完整的错误处理
-- 详细的日志输出
-- 心跳监控
-- 信号处理
-- 更丰富的行情信息显示
-
-## 注意事项
-
-1. **网络连接**: 确保网络连接正常，能够访问CTP服务器
-2. **动态库**: 确保 `thostmduserapi_se.so` 文件在当前目录
-3. **权限**: 确保程序有读取配置文件和写入日志的权限
-4. **合约代码**: 确保订阅的合约代码正确且存在
-5. **服务器状态**: 确保CTP服务器正常运行
-
-## 常见问题
-
-### 编译错误
-- 检查是否安装了 g++ 编译器
-- 检查头文件路径是否正确
-- 检查动态库文件是否存在
-
-### 连接失败
-- 检查网络连接
-- 检查服务器地址是否正确
-- 检查防火墙设置
-
-### 登录失败
-- 检查用户名密码是否正确
-- 检查经纪商代码是否正确
-- 检查账户是否有效
-
-### 无行情数据
-- 检查合约代码是否正确
-- 检查交易时间（非交易时间无行情）
-- 检查订阅是否成功
-
-## 扩展功能
-
-可以根据需要添加以下功能：
-- 配置文件解析
-- 数据库存储
-- 图形界面
-- 多合约管理
-- 历史数据下载
-- 技术指标计算
+- 需安装 `cmake` 和 `g++`
+- 运行时依赖 `ctp_test/lib/` 下的动态库
+- 配置文件默认位于 `ctp_test/config/`
+- 程序会在当前工作目录下创建 `flow_*` 流控目录

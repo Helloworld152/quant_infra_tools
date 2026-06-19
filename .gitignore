@@ -1,5 +1,6 @@
 *.con
 build/
+bin/
 config/
 flow/
 .cache/
@@ -7,3 +8,4 @@ flow/
 log_files/
 .vscode/
 
+plans/
