@@ -1,9 +1,10 @@
-# ctp_api
+# quant_infra_tools
 
 仓库按“大类一个文件夹”组织：
 
 - `ctp_test/`：CTP 基础测试与查询示例（原根目录代码已迁入）
 - `rohon_test/`：Rohon 相关测试示例
+- `nettools/`：组播接收与 `pcap` 抓包示例
 - `hf_ctp_md/`：高频行情采集模块
 
 统一构建入口位于仓库根目录：

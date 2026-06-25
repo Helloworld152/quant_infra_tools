@@ -36,7 +36,7 @@ cmake --build build
 构建产物输出到仓库根目录 `bin/`，与 `build/` 同级：
 
 ```text
-ctp_api/
+quant_infra_tools/
 ├── bin/
 └── build/
 ```
