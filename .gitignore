@@ -7,5 +7,10 @@ flow/
 
 log_files/
 .vscode/
+__pycache__/
 
 plans/
+
+*.csv
+*.txt
+auto

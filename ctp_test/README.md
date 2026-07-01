@@ -67,3 +67,29 @@ quant_infra_tools/
 - 运行时依赖 `ctp_test/lib/` 下的动态库
 - 配置文件默认位于 `ctp_test/config/`
 - 程序会在当前工作目录下创建 `flow_*` 流控目录
+
+## 合约元数据脚本
+
+可复用脚本 [instrument_meta_tool.py](/home/ruanying/ctp_api/ctp_test/instrument_meta_tool.py) 用于：
+
+- 从原始合约 CSV 提取 `品种,合约乘数,最小变动单位`
+- 将提取结果与参考文件做差异对比
+
+示例：
+
+```bash
+python3 instrument_meta_tool.py build-meta \
+  --csv instruments_20260701_135126.csv \
+  --output instruments_20260701_135126_product_meta.csv
+
+python3 instrument_meta_tool.py compare \
+  --reference auto \
+  --meta instruments_20260701_135126_product_meta.csv \
+  --report auto_compare_report.txt
+
+python3 instrument_meta_tool.py build-and-compare \
+  --csv instruments_20260701_135126.csv \
+  --reference auto \
+  --output instruments_20260701_135126_product_meta.csv \
+  --report auto_compare_report.txt
+```
