@@ -23,6 +23,7 @@ ctp_test/
 - `query_instruments`：合约查询
 - `auth_test`：穿透认证测试
 - `for_quote_demo`：询价示例
+- `trade_latest_price`：通过 TraderApi 批量查询配置中的合约，并输出 CSV
 
 ## 统一构建
 
@@ -50,6 +51,7 @@ quant_infra_tools/
 ./run_auth.sh [config_path]
 ./run_qry.sh
 ./run_for_quote.sh <instrument_id> <exchange_id> [config_path]
+./run_trade_latest_price.sh [config_path]
 ```
 
 也可以在仓库根目录手动运行：
@@ -59,6 +61,7 @@ quant_infra_tools/
 ./bin/auth_test ctp_test/config/config.ini
 ./bin/query_instruments
 ./bin/for_quote_demo au2412 SHFE ctp_test/config/config.ini
+./bin/trade_latest_price ctp_test/config/config.ini
 ```
 
 ## 运行前提
@@ -67,6 +70,7 @@ quant_infra_tools/
 - 运行时依赖 `ctp_test/lib/` 下的动态库
 - 配置文件默认位于 `ctp_test/config/`
 - 程序会在当前工作目录下创建 `flow_*` 流控目录
+- `trade_latest_price` 会读取 `[INSTRUMENTS] Instruments=...` 中的多个合约，并输出 `trade_latest_price_results.csv`
 
 ## 合约元数据脚本
 

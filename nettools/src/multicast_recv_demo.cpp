@@ -8,7 +8,6 @@
 #include <sstream>
 #include <string>
 #include <sys/socket.h>
-#include <sys/time.h>
 #include <unistd.h>
 
 namespace {
@@ -20,16 +19,6 @@ bool parsePort(const char *text, int &port) {
         return false;
     }
     port = static_cast<int>(value);
-    return true;
-}
-
-bool parseTimeout(const char *text, int &timeoutSec) {
-    char *end = nullptr;
-    long value = std::strtol(text, &end, 10);
-    if (!text || *text == '\0' || *end != '\0' || value <= 0 || value > 3600) {
-        return false;
-    }
-    timeoutSec = static_cast<int>(value);
     return true;
 }
 
@@ -55,34 +44,32 @@ std::string hexPreview(const unsigned char *data, std::size_t len, std::size_t m
 
 void printUsage(const char *prog) {
     std::cerr
-        << "Usage: " << prog << " <multicast_ip> <port> [bind_ip] [timeout_sec]\n"
-        << "Example: " << prog << " 239.10.10.10 12345 0.0.0.0 5\n";
+        << "Usage: " << prog << " <multicast_ip> <port> [bind_ip] [source_ip]\n"
+        << "Example (ASM): " << prog << " 239.10.10.10 12345 0.0.0.0\n"
+        << "Example (IGMPv3 SSM): " << prog << " 232.10.10.10 12345 192.168.1.10 192.168.1.20\n";
 }
 
 }  // namespace
 
 int main(int argc, char *argv[]) {
-    if (argc < 3 || argc > 5) {
+    if (argc < 3 || argc > 6) {
         printUsage(argv[0]);
         return 1;
     }
 
     const std::string multicastIp = argv[1];
     const std::string bindIp = argc >= 4 ? argv[3] : "0.0.0.0";
+    const bool useIgmpV3 = argc == 6;
+    const std::string sourceIp = useIgmpV3 ? argv[4] : "";
     int port = 0;
-    int timeoutSec = 5;
-
     if (!parsePort(argv[2], port)) {
         std::cerr << "invalid port: " << argv[2] << std::endl;
-        return 1;
-    }
-    if (argc >= 5 && !parseTimeout(argv[4], timeoutSec)) {
-        std::cerr << "invalid timeout_sec: " << argv[4] << std::endl;
         return 1;
     }
 
     in_addr multicastAddr {};
     in_addr interfaceAddr {};
+    in_addr sourceAddr {};
     if (!parseIPv4(multicastIp, multicastAddr)) {
         std::cerr << "invalid multicast ip: " << multicastIp << std::endl;
         return 1;
@@ -93,6 +80,10 @@ int main(int argc, char *argv[]) {
     }
     if (!parseIPv4(bindIp, interfaceAddr)) {
         std::cerr << "invalid bind ip: " << bindIp << std::endl;
+        return 1;
+    }
+    if (useIgmpV3 && !parseIPv4(sourceIp, sourceAddr)) {
+        std::cerr << "invalid source ip: " << sourceIp << std::endl;
         return 1;
     }
 
@@ -119,28 +110,34 @@ int main(int argc, char *argv[]) {
         return 2;
     }
 
-    ip_mreq membership {};
-    membership.imr_multiaddr = multicastAddr;
-    membership.imr_interface = interfaceAddr;
-    if (::setsockopt(fd, IPPROTO_IP, IP_ADD_MEMBERSHIP, &membership, sizeof(membership)) != 0) {
-        std::perror("setsockopt(IP_ADD_MEMBERSHIP)");
-        ::close(fd);
-        return 2;
-    }
-
-    timeval timeout {};
-    timeout.tv_sec = timeoutSec;
-    timeout.tv_usec = 0;
-    if (::setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) != 0) {
-        std::perror("setsockopt(SO_RCVTIMEO)");
-        ::close(fd);
-        return 2;
+    if (useIgmpV3) {
+        ip_mreq_source membership {};
+        membership.imr_multiaddr = multicastAddr;
+        membership.imr_interface = interfaceAddr;
+        membership.imr_sourceaddr = sourceAddr;
+        if (::setsockopt(fd, IPPROTO_IP, IP_ADD_SOURCE_MEMBERSHIP, &membership, sizeof(membership)) != 0) {
+            std::perror("setsockopt(IP_ADD_SOURCE_MEMBERSHIP)");
+            ::close(fd);
+            return 2;
+        }
+    } else {
+        ip_mreq membership {};
+        membership.imr_multiaddr = multicastAddr;
+        membership.imr_interface = interfaceAddr;
+        if (::setsockopt(fd, IPPROTO_IP, IP_ADD_MEMBERSHIP, &membership, sizeof(membership)) != 0) {
+            std::perror("setsockopt(IP_ADD_MEMBERSHIP)");
+            ::close(fd);
+            return 2;
+        }
     }
 
     std::cout << "joined multicast group " << multicastIp
               << ":" << port
-              << " via interface " << bindIp
-              << ", waiting up to " << timeoutSec << "s" << std::endl;
+              << " via interface " << bindIp;
+    if (useIgmpV3) {
+        std::cout << " with IGMPv3 source filter " << sourceIp;
+    }
+    std::cout << ", waiting for packets" << std::endl;
 
     unsigned char buffer[65536];
     sockaddr_in peerAddr {};
@@ -154,11 +151,6 @@ int main(int argc, char *argv[]) {
         &peerLen);
 
     if (received < 0) {
-        if (errno == EAGAIN || errno == EWOULDBLOCK) {
-            std::cerr << "timeout waiting for multicast packet" << std::endl;
-            ::close(fd);
-            return 3;
-        }
         std::perror("recvfrom");
         ::close(fd);
         return 2;
