@@ -9,7 +9,6 @@
 #include <sstream>
 #include <string>
 #include <thread>
-#include <vector>
 
 #include "ThostFtdcTraderApi.h"
 
@@ -21,7 +20,6 @@ struct TraderConfig {
     std::string app_id;
     std::string auth_code;
     std::string user_product_info;
-    std::vector<std::string> instruments;
 };
 
 static std::string trim(const std::string& s) {
@@ -134,20 +132,6 @@ static bool loadTraderConfig(const std::string& path, TraderConfig& cfg) {
     cfg.app_id = getConfigValue(data, "TRADER", "AppID");
     cfg.auth_code = getConfigValue(data, "TRADER", "AuthCode");
     cfg.user_product_info = getConfigValue(data, "TRADER", "UserProductInfo");
-    cfg.instruments.clear();
-
-    const std::string instruments = getConfigValue(data, "INSTRUMENTS", "Instruments");
-    for (size_t i = 0; i < instruments.size(); ) {
-        size_t j = instruments.find(',', i);
-        if (j == std::string::npos) {
-            j = instruments.size();
-        }
-        const std::string instrument = trim(instruments.substr(i, j - i));
-        if (!instrument.empty()) {
-            cfg.instruments.push_back(instrument);
-        }
-        i = j + 1;
-    }
 
     if (cfg.front_address.empty()) cfg.front_address = getConfigValue(data, "MD", "FrontAddress");
     if (cfg.broker_id.empty()) cfg.broker_id = getConfigValue(data, "MD", "BrokerID");
@@ -155,7 +139,7 @@ static bool loadTraderConfig(const std::string& path, TraderConfig& cfg) {
     if (cfg.password.empty()) cfg.password = getConfigValue(data, "MD", "Password");
 
     return !cfg.front_address.empty() && !cfg.broker_id.empty() && !cfg.user_id.empty() &&
-           !cfg.password.empty() && !cfg.instruments.empty();
+           !cfg.password.empty();
 }
 
 static bool isValidPrice(double price) {
@@ -269,7 +253,7 @@ public:
                   << ", ConfirmDate=" << (pSettlementInfoConfirm ? pSettlementInfoConfirm->ConfirmDate : "")
                   << ", ConfirmTime=" << (pSettlementInfoConfirm ? pSettlementInfoConfirm->ConfirmTime : "")
                   << std::endl;
-        sendNextQryDepthMarketData();
+        sendQryDepthMarketData();
     }
 
     void OnRspQryDepthMarketData(
@@ -277,37 +261,32 @@ public:
         CThostFtdcRspInfoField* pRspInfo,
         int,
         bool bIsLast) override {
-        const std::string& instrument_id = cfg_.instruments[current_index_];
-
         if (pRspInfo && pRspInfo->ErrorID != 0) {
             printRspError("[5/5] Query depth market data failed", pRspInfo);
             writeCsvRow(
-                instrument_id, instrument_id, "", "", "", 0, 0.0, false, 0.0, false,
+                "", "", "", "", "", 0, 0.0, false, 0.0, false,
                 "ERROR", decodeGbkToUtf8(pRspInfo->ErrorMsg));
-            finishCurrentQuery(false);
+            ++failed_queries_;
+            finished_ = true;
+            success_ = false;
             return;
         }
 
         if (pDepthMarketData) {
             const bool has_last_price = isValidPrice(pDepthMarketData->LastPrice);
             const bool has_settlement_price = isValidPrice(pDepthMarketData->SettlementPrice);
-            current_query_has_result_ = true;
+            ++received_rows_;
 
-            std::cout << "[5/5] Depth market data received"
-                      << " (" << (current_index_ + 1) << "/" << cfg_.instruments.size() << ")" << std::endl;
-            std::cout << "  QueryInstrument=" << instrument_id << std::endl;
-            std::cout << "  InstrumentID=" << pDepthMarketData->InstrumentID << std::endl;
-            std::cout << "  TradingDay=" << pDepthMarketData->TradingDay << std::endl;
-            std::cout << "  ActionDay=" << pDepthMarketData->ActionDay << std::endl;
-            std::cout << "  UpdateTime=" << pDepthMarketData->UpdateTime
-                      << "." << pDepthMarketData->UpdateMillisec << std::endl;
-            std::cout << "  LastPrice=" << pDepthMarketData->LastPrice
-                      << (has_last_price ? " (valid)" : " (invalid)") << std::endl;
-            std::cout << "  SettlementPrice=" << pDepthMarketData->SettlementPrice
-                      << (has_settlement_price ? " (valid)" : " (invalid)") << std::endl;
-            std::cout << "  HasSettlementPrice=" << (has_settlement_price ? "YES" : "NO") << std::endl;
+            if (received_rows_ % 1000 == 0) {
+                std::cout << "[5/5] Depth market data received rows=" << received_rows_
+                          << ", latest InstrumentID=" << pDepthMarketData->InstrumentID
+                          << ", TradingDay=" << pDepthMarketData->TradingDay
+                          << ", SettlementPrice=" << pDepthMarketData->SettlementPrice
+                          << (has_settlement_price ? " (valid)" : " (invalid)")
+                          << std::endl;
+            }
             writeCsvRow(
-                instrument_id,
+                "",
                 pDepthMarketData->InstrumentID,
                 pDepthMarketData->TradingDay,
                 pDepthMarketData->ActionDay,
@@ -322,15 +301,23 @@ public:
         }
 
         if (bIsLast) {
-            if (current_query_has_result_) {
-                finishCurrentQuery(true);
+            if (received_rows_ > 0) {
+                ++successful_queries_;
+                finished_ = true;
+                success_ = true;
+                std::cout << "Query summary: rows=" << received_rows_
+                          << ", failed=" << failed_queries_ << std::endl;
+                if (csv_file_.is_open()) {
+                    std::cout << "CSV output: " << csv_path_ << std::endl;
+                }
             } else {
-                std::cerr << "No depth market data returned for InstrumentID="
-                          << instrument_id << std::endl;
+                std::cerr << "No depth market data returned." << std::endl;
                 writeCsvRow(
-                    instrument_id, instrument_id, "", "", "", 0, 0.0, false, 0.0, false,
+                    "", "", "", "", "", 0, 0.0, false, 0.0, false,
                     "NO_DATA", "");
-                finishCurrentQuery(false);
+                ++failed_queries_;
+                finished_ = true;
+                success_ = false;
             }
         }
     }
@@ -358,6 +345,7 @@ private:
         const int rc = api_->ReqAuthenticate(&req, ++request_id_);
         if (rc != 0) {
             std::cerr << "ReqAuthenticate failed, ret=" << rc << std::endl;
+            ++failed_queries_;
             finished_ = true;
             success_ = false;
             return;
@@ -375,6 +363,7 @@ private:
         const int rc = api_->ReqUserLogin(&req, ++request_id_);
         if (rc != 0) {
             std::cerr << "ReqUserLogin failed, ret=" << rc << std::endl;
+            ++failed_queries_;
             finished_ = true;
             success_ = false;
             return;
@@ -391,6 +380,7 @@ private:
         const int rc = api_->ReqSettlementInfoConfirm(&req, ++request_id_);
         if (rc != 0) {
             std::cerr << "ReqSettlementInfoConfirm failed, ret=" << rc << std::endl;
+            ++failed_queries_;
             finished_ = true;
             success_ = false;
             return;
@@ -398,49 +388,24 @@ private:
         std::cout << "Settlement confirm request sent." << std::endl;
     }
 
-    void sendNextQryDepthMarketData() {
-        if (current_index_ >= cfg_.instruments.size()) {
-            finished_ = true;
-            success_ = (failed_queries_ == 0 && successful_queries_ > 0);
-            std::cout << "Query summary: success=" << successful_queries_
-                      << ", failed=" << failed_queries_ << std::endl;
-            if (csv_file_.is_open()) {
-                std::cout << "CSV output: " << csv_path_ << std::endl;
-            }
-            return;
-        }
-
-        current_query_has_result_ = false;
-        const std::string& instrument_id = cfg_.instruments[current_index_];
+    void sendQryDepthMarketData() {
         CThostFtdcQryDepthMarketDataField req;
         std::memset(&req, 0, sizeof(req));
-        std::strncpy(req.InstrumentID, instrument_id.c_str(), sizeof(req.InstrumentID) - 1);
 
         const int rc = api_->ReqQryDepthMarketData(&req, ++request_id_);
         if (rc != 0) {
             std::cerr << "ReqQryDepthMarketData failed, ret=" << rc
-                      << ", InstrumentID=" << instrument_id << std::endl;
+                      << ", InstrumentID=" << req.InstrumentID << std::endl;
             writeCsvRow(
-                instrument_id, instrument_id, "", "", "", 0, 0.0, false, 0.0, false,
+                "", "", "", "", "", 0, 0.0, false, 0.0, false,
                 "REQ_ERROR", "ReqQryDepthMarketData ret=" + std::to_string(rc));
-            finishCurrentQuery(false);
+            ++failed_queries_;
+            finished_ = true;
+            success_ = false;
             return;
         }
 
-        std::cout << "Depth market data query sent"
-                  << " (" << (current_index_ + 1) << "/" << cfg_.instruments.size() << ")"
-                  << ", InstrumentID=" << instrument_id << std::endl;
-    }
-
-    void finishCurrentQuery(bool success) {
-        if (success) {
-            ++successful_queries_;
-        } else {
-            ++failed_queries_;
-        }
-        std::this_thread::sleep_for(std::chrono::seconds(3));
-        ++current_index_;
-        sendNextQryDepthMarketData();
+        std::cout << "Depth market data query sent, InstrumentID=" << req.InstrumentID << std::endl;
     }
 
     void writeCsvRow(
@@ -481,10 +446,9 @@ private:
     std::ofstream csv_file_;
     std::string csv_path_;
     int request_id_ = 0;
-    size_t current_index_ = 0;
+    int received_rows_ = 0;
     int successful_queries_ = 0;
     int failed_queries_ = 0;
-    bool current_query_has_result_ = false;
     std::atomic<bool> finished_{false};
     std::atomic<bool> success_{false};
 };
@@ -498,8 +462,7 @@ int main(int argc, char* argv[]) {
     TraderConfig cfg;
     if (!loadTraderConfig(config_path, cfg)) {
         std::cerr << "Load config failed: " << config_path << std::endl;
-        std::cerr << "Required fields: FrontAddress/BrokerID/UserID/Password in [TRADER] or [MD], "
-                  << "and [INSTRUMENTS] Instruments=..." << std::endl;
+        std::cerr << "Required fields: FrontAddress/BrokerID/UserID/Password in [TRADER] or [MD]." << std::endl;
         return 1;
     }
 
@@ -507,12 +470,7 @@ int main(int argc, char* argv[]) {
     std::cout << "  FrontAddress=" << cfg.front_address << std::endl;
     std::cout << "  BrokerID=" << cfg.broker_id << std::endl;
     std::cout << "  UserID=" << cfg.user_id << std::endl;
-    std::cout << "  Instruments(" << cfg.instruments.size() << ")=";
-    for (size_t i = 0; i < cfg.instruments.size(); ++i) {
-        if (i != 0) std::cout << ",";
-        std::cout << cfg.instruments[i];
-    }
-    std::cout << std::endl;
+    std::cout << "  Instruments=ALL (InstrumentID empty)" << std::endl;
     std::cout << "  ApiVersion=" << CThostFtdcTraderApi::GetApiVersion() << std::endl;
 
     CThostFtdcTraderApi* api = CThostFtdcTraderApi::CreateFtdcTraderApi("flow_trade_latest_price/");

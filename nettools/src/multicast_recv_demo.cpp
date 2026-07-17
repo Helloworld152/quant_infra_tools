@@ -52,14 +52,14 @@ void printUsage(const char *prog) {
 }  // namespace
 
 int main(int argc, char *argv[]) {
-    if (argc < 3 || argc > 6) {
+    if (argc < 3 || argc > 5) {
         printUsage(argv[0]);
         return 1;
     }
 
     const std::string multicastIp = argv[1];
     const std::string bindIp = argc >= 4 ? argv[3] : "0.0.0.0";
-    const bool useIgmpV3 = argc == 6;
+    const bool useIgmpV3 = argc == 5;
     const std::string sourceIp = useIgmpV3 ? argv[4] : "";
     int port = 0;
     if (!parsePort(argv[2], port)) {
