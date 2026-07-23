@@ -7,8 +7,8 @@
 #include <iostream>
 #include <sstream>
 #include <string>
-#include <sys/socket.h>
-#include <unistd.h>
+
+#include "hft_common/net/udp_multicast_receiver.h"
 
 namespace {
 
@@ -87,48 +87,25 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    int fd = ::socket(AF_INET, SOCK_DGRAM, 0);
-    if (fd < 0) {
-        std::perror("socket");
-        return 2;
-    }
-
-    int reuse = 1;
-    if (::setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse)) != 0) {
-        std::perror("setsockopt(SO_REUSEADDR)");
-        ::close(fd);
-        return 2;
-    }
-
-    sockaddr_in localAddr {};
-    localAddr.sin_family = AF_INET;
-    localAddr.sin_port = htons(static_cast<uint16_t>(port));
-    localAddr.sin_addr.s_addr = htonl(INADDR_ANY);
-    if (::bind(fd, reinterpret_cast<sockaddr *>(&localAddr), sizeof(localAddr)) != 0) {
-        std::perror("bind");
-        ::close(fd);
-        return 2;
-    }
-
-    if (useIgmpV3) {
-        ip_mreq_source membership {};
-        membership.imr_multiaddr = multicastAddr;
-        membership.imr_interface = interfaceAddr;
-        membership.imr_sourceaddr = sourceAddr;
-        if (::setsockopt(fd, IPPROTO_IP, IP_ADD_SOURCE_MEMBERSHIP, &membership, sizeof(membership)) != 0) {
-            std::perror("setsockopt(IP_ADD_SOURCE_MEMBERSHIP)");
-            ::close(fd);
-            return 2;
+    hft_common::net::UdpMulticastReceiver receiver;
+    try {
+        if (useIgmpV3) {
+            hft_common::net::UdpMulticastReceiverConfigV3 config;
+            config.multicast_ip = multicastIp;
+            config.interface_ip = bindIp;
+            config.source_ip = sourceIp;
+            config.port = static_cast<uint16_t>(port);
+            receiver.init_v3(config);
+        } else {
+            hft_common::net::UdpMulticastReceiverConfigV2 config;
+            config.multicast_ip = multicastIp;
+            config.interface_ip = bindIp;
+            config.port = static_cast<uint16_t>(port);
+            receiver.init_v2(config);
         }
-    } else {
-        ip_mreq membership {};
-        membership.imr_multiaddr = multicastAddr;
-        membership.imr_interface = interfaceAddr;
-        if (::setsockopt(fd, IPPROTO_IP, IP_ADD_MEMBERSHIP, &membership, sizeof(membership)) != 0) {
-            std::perror("setsockopt(IP_ADD_MEMBERSHIP)");
-            ::close(fd);
-            return 2;
-        }
+    } catch (const std::exception &ex) {
+        std::cerr << ex.what() << std::endl;
+        return 2;
     }
 
     std::cout << "joined multicast group " << multicastIp
@@ -142,17 +119,10 @@ int main(int argc, char *argv[]) {
     unsigned char buffer[65536];
     sockaddr_in peerAddr {};
     socklen_t peerLen = sizeof(peerAddr);
-    ssize_t received = ::recvfrom(
-        fd,
-        buffer,
-        sizeof(buffer),
-        0,
-        reinterpret_cast<sockaddr *>(&peerAddr),
-        &peerLen);
+    ssize_t received = receiver.recv_from(buffer, sizeof(buffer), &peerAddr);
 
     if (received < 0) {
         std::perror("recvfrom");
-        ::close(fd);
         return 2;
     }
 
@@ -164,6 +134,5 @@ int main(int argc, char *argv[]) {
               << ", preview=" << hexPreview(buffer, static_cast<std::size_t>(received), 16)
               << std::endl;
 
-    ::close(fd);
     return 0;
 }
